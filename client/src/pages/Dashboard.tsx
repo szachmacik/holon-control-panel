@@ -96,6 +96,12 @@ interface CoolifyResource {
   updated_at: string;
 }
 
+interface Archangel extends GuardianAngel {
+  rank: number;
+  domain2?: string; // secondary domain
+  power: string;    // special ability description
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const COOLIFY_BASE = "https://coolify.ofshore.dev/api/v1";
@@ -107,6 +113,42 @@ const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 // Default PIN: 2026 (4-digit for simplicity)
 const DASHBOARD_PIN = "2026";
 
+// ─── Archangel Definitions (top tier — promoted from angel ranks) ──────────────
+// Metatron: Orchestration Master → promoted for highest uptime & coordination role
+// Michał:   Automation Overseer  → promoted for security & enforcement authority
+// Gabriel:  API Gateway Warden   → promoted for critical path (all traffic flows through)
+// Raziel:   Incident Responder   → promoted for crisis management & secret knowledge
+
+const ARCHANGEL_DEFINITIONS: Omit<Archangel, "status" | "latency" | "lastCheck" | "rawStatus">[] = [
+  {
+    id: "metatron-arch",  name: "METATRON",  domain: "metatron.ofshore.dev",
+    url: "https://metatron.ofshore.dev",
+    role: "Supreme Orchestrator", power: "Pełna kontrola nad siecią Holon Mesh — zarządza wszystkimi agentami",
+    icon: <Cpu size={16}/>, color: "#ffd700", rank: 1, svcName: "angel-metatron",
+  },
+  {
+    id: "michal-arch",    name: "MICHAŁ",    domain: "michal.ofshore.dev",
+    url: "https://michal.ofshore.dev",
+    role: "Divine Enforcer",      power: "Bezpieczeństwo i automatyzacja — egzekwuje polityki całej infrastruktury",
+    icon: <Shield size={16}/>, color: "#ff8c00", rank: 2, svcName: "angel-michal",
+  },
+  {
+    id: "gabriel-arch",   name: "GABRIEL",   domain: "gabriel.ofshore.dev",
+    url: "https://gabriel.ofshore.dev",
+    role: "Herald of APIs",        power: "Bramka API — każde żądanie przechodzi przez Gabriela",
+    icon: <Globe size={16}/>, color: "#b44fff", rank: 3, svcName: "angel-gabriel",
+  },
+  {
+    id: "raziel-arch",    name: "RAZIEL",    domain: "raziel.ofshore.dev",
+    url: "https://raziel.ofshore.dev",
+    role: "Keeper of Secrets",     power: "Zarządza sekretami i reaguje na incydenty — dostęp do wszystkich kluczy",
+    icon: <Flame size={16}/>, color: "#ff3366", rank: 4, svcName: "angel-raziel",
+  },
+];
+
+// ─── Standard Angel Definitions (12 — always the same set) ──────────────────
+// Note: Metatron, Michał, Gabriel, Raziel are ALSO in archangels — they appear
+// in both tiers (archangel card + standard angel card) for full coverage.
 const ANGEL_DEFINITIONS: Omit<GuardianAngel, "status" | "latency" | "lastCheck" | "rawStatus">[] = [
   { id: "ariel",     name: "ARIEL",     domain: "ariel.ofshore.dev",     url: "https://ariel.ofshore.dev",     role: "Database Guardian",    icon: <Database size={14}/>,  color: "#00ff88",  svcName: "angel-ariel" },
   { id: "rafal",     name: "RAFAŁ",     domain: "rafal.ofshore.dev",     url: "https://rafal.ofshore.dev",     role: "AI Model Shepherd",    icon: <Bot size={14}/>,       color: "#00d4ff",  svcName: "angel-rafal" },
@@ -292,6 +334,9 @@ type Section = "angels" | "services" | "kairos" | "coord" | "infra" | "ops";
 export default function Dashboard() {
   const [authed, setAuthed] = useState(() => sessionStorage.getItem("holon_auth") === "1");
 
+  const [archangels, setArchangels] = useState<Archangel[]>(
+    ARCHANGEL_DEFINITIONS.map(a => ({ ...a, status: "unknown" as ServiceStatus, lastCheck: "—" }))
+  );
   const [angels, setAngels] = useState<GuardianAngel[]>(
     ANGEL_DEFINITIONS.map(a => ({ ...a, status: "unknown" as ServiceStatus, lastCheck: "—" }))
   );
@@ -398,15 +443,28 @@ export default function Dashboard() {
         const svcsData = await svcsRes.json();
         const svcs: any[] = Array.isArray(svcsData) ? svcsData : [];
 
-        setAngels(prev => prev.map(angel => {
+        // Helper to match a service by svcName
+        const matchSvc = (svcName: string) => {
           const matches = svcs.filter(s =>
-            (s.name ?? "").toLowerCase() === (angel.svcName ?? angel.id).toLowerCase()
+            (s.name ?? "").toLowerCase() === svcName.toLowerCase()
           );
-          const svc = matches.find(s => (s.status ?? "").includes("running")) || matches[0];
+          return matches.find(s => (s.status ?? "").includes("running")) || matches[0];
+        };
+
+        // Update archangels
+        setArchangels(prev => prev.map(arch => {
+          const svc = matchSvc(arch.svcName ?? arch.id);
+          if (!svc) return arch;
+          const raw = svc.status ?? "unknown";
+          return { ...arch, status: rawToStatus(raw), lastCheck: formatTime(), coolifyUuid: svc.uuid, rawStatus: raw };
+        }));
+
+        // Update standard angels
+        setAngels(prev => prev.map(angel => {
+          const svc = matchSvc(angel.svcName ?? angel.id);
           if (!svc) return angel;
           const raw = svc.status ?? "unknown";
-          const status = rawToStatus(raw);
-          return { ...angel, status, lastCheck: formatTime(), coolifyUuid: svc.uuid, rawStatus: raw };
+          return { ...angel, status: rawToStatus(raw), lastCheck: formatTime(), coolifyUuid: svc.uuid, rawStatus: raw };
         }));
       }
 
@@ -528,6 +586,7 @@ export default function Dashboard() {
   }, [autoRefresh, refresh]);
 
   // ── Derived stats ───────────────────────────────────────────────────────────
+  const healthyArchangels = archangels.filter(a => a.status === "healthy").length;
   const healthyAngels   = angels.filter(a => a.status === "healthy").length;
   const errorAngels     = angels.filter(a => a.status === "error").length;
   const healthyServices = services.filter(s => s.status === "healthy").length;
@@ -553,7 +612,7 @@ export default function Dashboard() {
   });
 
   const navItems: { id: Section; label: string; icon: React.ReactNode; badge?: number | string }[] = [
-    { id: "angels",   label: "ANIOŁOWIE",    icon: <Shield size={13}/>,       badge: `${healthyAngels}/12` },
+    { id: "angels",   label: "HIERARCHIA",   icon: <Shield size={13}/>,       badge: `${healthyArchangels}/4 ✦` },
     { id: "services", label: "SERWISY",      icon: <Server size={13}/>,       badge: `${healthyServices}/${services.length}` },
     { id: "infra",    label: "INFRASTRUKTURA", icon: <Boxes size={13}/>,      badge: `${infraRunning}/${allResources.length}` },
     { id: "kairos",   label: "KAIROS",       icon: <TrendingUp size={13}/>,   badge: kairos?.pending },
@@ -604,6 +663,7 @@ export default function Dashboard() {
           {/* KPIs */}
           <div className="hidden lg:flex items-center gap-5">
             {[
+              { label: "ARCHANIOŁY",   value: `${healthyArchangels}/4`,             color: healthyArchangels === 4 ? "#ffd700" : healthyArchangels >= 2 ? "#ff8c00" : "#ff3366" },
               { label: "ANIOŁOWIE",    value: `${healthyAngels}/12`,              color: healthyAngels >= 10 ? "#00ff88" : healthyAngels >= 6 ? "#ffd700" : "#ff3366" },
               { label: "SERWISY",      value: `${healthyServices}/${services.length}`, color: "#00d4ff" },
               { label: "COOLIFY APPS", value: `${coolifyHealthy}/${coolifyApps}`, color: "#b44fff" },
@@ -720,17 +780,119 @@ export default function Dashboard() {
         <main className="flex-1 overflow-y-auto p-5">
           <AnimatePresence mode="wait">
 
-            {/* ── Angels Grid ── */}
+            {/* ── Hierarchy (Archangels + Angels) ── */}
             {activeSection === "angels" && (
               <motion.div key="angels" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <SectionHeader
-                  title="12 ANIOŁÓW STRÓŻÓW"
-                  sub="Autonomiczni agenci opiekunowie infrastruktury Holon Mesh · AMS3 Droplet · code-server"
-                  count={`${healthyAngels} / 12 AKTYWNYCH`}
-                />
 
-                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                  {angels.map((angel, i) => (
+                {/* ===== ARCHANIOŁOWIE ===== */}
+                <div className="mb-6">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[#ffd700] text-base">&#10022;</span>
+                      <span className="mono text-[13px] font-bold tracking-[0.2em] text-[#ffd700]">ARCHANIOŁOWIE</span>
+                      <span className="text-[#ffd700] text-base">&#10022;</span>
+                    </div>
+                    <div className="flex-1 h-px" style={{ background: "linear-gradient(90deg, #ffd70040, transparent)" }} />
+                    <span className="mono text-[10px] text-[#666644]">{healthyArchangels}/4 AKTYWNYCH</span>
+                  </div>
+                  <p className="text-[#444433] text-[10px] mono mb-3">Elita Holon Mesh — awansowani za najwyższy uptime i krytyczną rolę w infrastrukturze</p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                    {archangels.map((arch, i) => (
+                      <motion.div
+                        key={arch.id}
+                        initial={{ opacity: 0, y: 16 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.06 }}
+                        onClick={() => setSelectedAngel(selectedAngel?.id === arch.id ? null : arch)}
+                        className="cursor-pointer transition-all group relative overflow-hidden rounded-sm"
+                        style={{
+                          background: selectedAngel?.id === arch.id
+                            ? `linear-gradient(135deg, ${arch.color}10, ${arch.color}05)`
+                            : `linear-gradient(135deg, ${arch.color}08, #0a0a0f)`,
+                          border: `1px solid ${selectedAngel?.id === arch.id ? arch.color + "50" : arch.color + "25"}`,
+                          boxShadow: `0 0 20px ${arch.color}08`,
+                        }}
+                      >
+                        {/* Crown accent top bar */}
+                        <div className="h-[2px] w-full" style={{ background: `linear-gradient(90deg, transparent, ${arch.color}80, transparent)` }} />
+
+                        <div className="p-4">
+                          {/* Rank badge */}
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-10 h-10 rounded-sm flex items-center justify-center" style={{ backgroundColor: `${arch.color}18`, color: arch.color, border: `1px solid ${arch.color}30` }}>
+                                {arch.icon}
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="mono text-[12px] font-bold tracking-widest" style={{ color: arch.color }}>{arch.name}</span>
+                                  <span className="text-[10px]" style={{ color: arch.color }}>&#10022;</span>
+                                </div>
+                                <div className="text-[#555544] text-[9px] mono">{arch.role}</div>
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end gap-1">
+                              <StatusDot status={arch.status} size={8} />
+                              <span className="mono text-[8px] font-bold" style={{ color: arch.color }}>#{arch.rank}</span>
+                            </div>
+                          </div>
+
+                          {/* Power description */}
+                          <div className="text-[#333322] text-[9px] mono leading-relaxed mb-2 line-clamp-2">{arch.power}</div>
+
+                          <div className="flex items-center justify-between">
+                            <span className="mono text-[9px] tracking-widest font-bold" style={{ color: statusColor(arch.status) }}>
+                              {statusLabel(arch.status)}
+                            </span>
+                            {arch.latency && <LatencyBadge ms={arch.latency} />}
+                          </div>
+
+                          <AnimatePresence>
+                            {selectedAngel?.id === arch.id && (
+                              <motion.div
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: "auto", opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                className="overflow-hidden"
+                              >
+                                <div className="mt-3 pt-3 space-y-2" style={{ borderTop: `1px solid ${arch.color}20` }}>
+                                  <div className="flex gap-1.5">
+                                    <button onClick={e => { e.stopPropagation(); doAngelAction(arch, "restart"); }} disabled={!!angelAction}
+                                      className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[9px] mono transition-all hover:opacity-80 disabled:opacity-40"
+                                      style={{ border: `1px solid ${arch.color}40`, color: arch.color, backgroundColor: `${arch.color}08` }}>
+                                      <RotateCcw size={9} /> RESTART
+                                    </button>
+                                    <button onClick={e => { e.stopPropagation(); doAngelAction(arch, "stop"); }} disabled={!!angelAction}
+                                      className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[9px] mono transition-all hover:bg-[#ff3366]/10 disabled:opacity-40"
+                                      style={{ border: "1px solid #ff336630", color: "#ff3366" }}>
+                                      <StopCircle size={9} /> STOP
+                                    </button>
+                                  </div>
+                                  <a href={arch.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                                    className="flex items-center gap-1.5 text-[10px] mono transition-colors" style={{ color: arch.color }}>
+                                    <Terminal size={10} /> OTWÓRZ TERMINAL <ExternalLink size={9} />
+                                  </a>
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ===== 12 ANIOŁÓW ===== */}
+                <div>
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="mono text-[12px] font-bold tracking-[0.2em] text-[#888899]">12 ANIOŁÓW STRÓŻÓW</span>
+                    <div className="flex-1 h-px bg-[#1a1a2e]" />
+                    <span className="mono text-[10px] text-[#444466]">{healthyAngels}/12 AKTYWNYCH</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                    {angels.map((angel, i) => (
                     <motion.div
                       key={angel.id}
                       initial={{ opacity: 0, y: 16 }}
@@ -848,6 +1010,7 @@ export default function Dashboard() {
                       </AnimatePresence>
                     </motion.div>
                   ))}
+                  </div>
                 </div>
 
                 {/* Status summary bar */}
