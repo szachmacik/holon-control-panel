@@ -124,25 +124,25 @@ const ARCHANGEL_DEFINITIONS: Omit<Archangel, "status" | "latency" | "lastCheck" 
     id: "metatron-arch",  name: "METATRON",  domain: "metatron.ofshore.dev",
     url: "https://metatron.ofshore.dev",
     role: "Supreme Orchestrator", power: "Pełna kontrola nad siecią Holon Mesh — zarządza wszystkimi agentami",
-    icon: <Cpu size={16}/>, color: "#ffd700", rank: 1, svcName: "angel-metatron",
+    icon: <Cpu size={16}/>, color: "#ffd700", rank: 1, svcName: "archangel-metatron",
   },
   {
     id: "michal-arch",    name: "MICHAŁ",    domain: "michal.ofshore.dev",
     url: "https://michal.ofshore.dev",
     role: "Divine Enforcer",      power: "Bezpieczeństwo i automatyzacja — egzekwuje polityki całej infrastruktury",
-    icon: <Shield size={16}/>, color: "#ff8c00", rank: 2, svcName: "angel-michal",
+    icon: <Shield size={16}/>, color: "#ff8c00", rank: 2, svcName: "archangel-michal",
   },
   {
     id: "gabriel-arch",   name: "GABRIEL",   domain: "gabriel.ofshore.dev",
     url: "https://gabriel.ofshore.dev",
     role: "Herald of APIs",        power: "Bramka API — każde żądanie przechodzi przez Gabriela",
-    icon: <Globe size={16}/>, color: "#b44fff", rank: 3, svcName: "angel-gabriel",
+    icon: <Globe size={16}/>, color: "#b44fff", rank: 3, svcName: "archangel-gabriel",
   },
   {
     id: "raziel-arch",    name: "RAZIEL",    domain: "raziel.ofshore.dev",
     url: "https://raziel.ofshore.dev",
     role: "Keeper of Secrets",     power: "Zarządza sekretami i reaguje na incydenty — dostęp do wszystkich kluczy",
-    icon: <Flame size={16}/>, color: "#ff3366", rank: 4, svcName: "angel-raziel",
+    icon: <Flame size={16}/>, color: "#ff3366", rank: 4, svcName: "archangel-raziel",
   },
 ];
 
