@@ -18,6 +18,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import NeuralMesh, { type MeshNode, type MeshEdge } from "@/components/NeuralMesh";
+import { KairosPanel } from "@/components/KairosPanel";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Activity, Shield, Database, Cpu, Globe, Zap,
@@ -360,6 +361,7 @@ export default function Dashboard() {
   const [actionResult, setActionResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [infraFilter, setInfraFilter] = useState<string>("all");
   const [infraSearch, setInfraSearch] = useState<string>("");
+  const [kairosTab, setKairosTab] = useState<'scheduler' | 'pulse'>('scheduler');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   if (!authed) return <PinAuth onAuth={() => setAuthed(true)} />;
@@ -1252,12 +1254,34 @@ export default function Dashboard() {
               </motion.div>
             )}
 
-            {/* ── Kairos Pulse ── */}
+            {/* ── Kairos Pulse + KAIR.OS Scheduler ── */}
             {activeSection === "kairos" && (
               <motion.div key="kairos" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <SectionHeader title="KAIROS PULSE" sub="Przepustowość zadań sieci Holon Mesh · nocna_fabryka_queue · Supabase" />
+                <SectionHeader title="KAIR.OS" sub="Adaptacyjny scheduler zero-dependency · Filozofia biblijna · Alternatywa CRON" />
 
-                {kairos ? (
+                {/* Sub-tabs */}
+                <div className="flex gap-2 mb-5">
+                  {(["scheduler", "pulse"] as const).map(tab => (
+                    <button key={tab}
+                      onClick={() => setKairosTab(tab)}
+                      className="px-3 py-1.5 rounded-sm text-[10px] mono transition-all"
+                      style={{
+                        background: kairosTab === tab ? 'rgba(251,191,36,0.12)' : 'rgba(255,255,255,0.03)',
+                        color: kairosTab === tab ? '#fbbf24' : 'rgba(255,255,255,0.3)',
+                        border: `1px solid ${kairosTab === tab ? 'rgba(251,191,36,0.3)' : '#1a1a2e'}`,
+                      }}>
+                      {tab === 'scheduler' ? '⏱ KAIR.OS SCHEDULER' : '📊 KAIROS PULSE'}
+                    </button>
+                  ))}
+                </div>
+
+                {kairosTab === 'scheduler' && (
+                  <KairosPanel meshUrl="https://mesh.ofshore.dev" />
+                )}
+
+                {kairosTab === 'pulse' && (
+                  <div>
+                  {kairos ? (
                   <>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
                       {[
@@ -1316,6 +1340,8 @@ export default function Dashboard() {
                       <RefreshCw size={20} className="text-[#333355] mx-auto mb-2 animate-spin" />
                       <div className="text-[#333355] text-xs mono">Ładowanie danych Kairos...</div>
                     </div>
+                  </div>
+                  )}
                   </div>
                 )}
               </motion.div>
