@@ -45,6 +45,7 @@ interface GuardianAngel {
   icon: React.ReactNode;
   color: string;
   coolifyUuid?: string;
+  svcName?: string;  // Nazwa service w Coolify (angel-ariel, angel-michal, etc.)
 }
 
 interface ServiceMetric {
@@ -85,25 +86,27 @@ interface KairosMetric {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const COOLIFY_BASE = "https://coolify.ofshore.dev/api/v1";
-const COOLIFY_TOKEN = "5|iVCIKkag2PcD4nP8mGstQK3ApaTrpXI03hWJJVkKHYbFJhcOEJqMV8BrKMGpuqkI";
+const COOLIFY_TOKEN = "5|iVCIKkag2PcD4nP8mGstQK3ApaTrpXI03qQ9Ely6bc1871a4";
 
 // Supabase public anon key (safe to expose in frontend)
 const SUPABASE_URL = "https://zqlfxakzqkzxoqhzpgqh.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpxbGZ4YWt6cWt6eG9xaHpwZ3FoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzI3MjYzODQsImV4cCI6MjA0ODMwMjM4NH0.dSYCKlJRFnWzCCQUfBMVPBqZKkqZtHMJqjDHFi2XJWY";
 
 const ANGEL_DEFINITIONS: Omit<GuardianAngel, "status" | "latency" | "lastCheck">[] = [
-  { id: "ariel",     name: "ARIEL",     domain: "ariel.ofshore.dev",     url: "https://ariel.ofshore.dev",     role: "Database Guardian",    icon: <Database size={14}/>,  color: "#00ff88" },
-  { id: "michael",   name: "MICHAŁ",    domain: "michael.ofshore.dev",   url: "https://michael.ofshore.dev",   role: "Automation Overseer",  icon: <Zap size={14}/>,       color: "#00d4ff" },
-  { id: "gabriel",   name: "GABRIEL",   domain: "gabriel.ofshore.dev",   url: "https://gabriel.ofshore.dev",   role: "API Gateway Warden",   icon: <Globe size={14}/>,     color: "#b44fff" },
-  { id: "raphael",   name: "RAFAŁ",     domain: "raphael.ofshore.dev",   url: "https://raphael.ofshore.dev",   role: "AI Model Shepherd",    icon: <Bot size={14}/>,       color: "#ffd700" },
-  { id: "uriel",     name: "URIEL",     domain: "uriel.ofshore.dev",     url: "https://uriel.ofshore.dev",     role: "Security Sentinel",    icon: <Shield size={14}/>,    color: "#ff3366" },
-  { id: "zadkiel",   name: "ZADKIEL",   domain: "zadkiel.ofshore.dev",   url: "https://zadkiel.ofshore.dev",   role: "Secrets Keeper",       icon: <Lock size={14}/>,      color: "#ff8c00" },
-  { id: "jophiel",   name: "JOFIEL",    domain: "jophiel.ofshore.dev",   url: "https://jophiel.ofshore.dev",   role: "Frontend Architect",   icon: <Layers size={14}/>,    color: "#00ff88" },
-  { id: "chamuel",   name: "CHAMUEL",   domain: "chamuel.ofshore.dev",   url: "https://chamuel.ofshore.dev",   role: "Network Pathfinder",   icon: <Network size={14}/>,   color: "#00d4ff" },
-  { id: "haniel",    name: "HANIEL",    domain: "haniel.ofshore.dev",    url: "https://haniel.ofshore.dev",    role: "Storage Custodian",    icon: <HardDrive size={14}/>, color: "#b44fff" },
-  { id: "metatron",  name: "METATRON",  domain: "metatron.ofshore.dev",  url: "https://metatron.ofshore.dev",  role: "Orchestration Master", icon: <Cpu size={14}/>,       color: "#ffd700" },
-  { id: "sandalphon",name: "SANDALFON", domain: "sandalphon.ofshore.dev",url: "https://sandalphon.ofshore.dev",role: "Log Analyst",          icon: <BarChart3 size={14}/>, color: "#ff3366" },
-  { id: "azrael",    name: "AZRAEL",    domain: "azrael.ofshore.dev",    url: "https://azrael.ofshore.dev",    role: "Incident Responder",   icon: <Flame size={14}/>,     color: "#ff8c00" },
+  // Anioły używają code-server (VS Code w przeglądarce) na subdomenach ofshore.dev
+  // Hasło: holon-angel-[name]-2026 | Sudo: holon-sudo-[name]-2026
+  { id: "ariel",     name: "ARIEL",     domain: "ariel.ofshore.dev",     url: "https://ariel.ofshore.dev",     role: "Database Guardian",    icon: <Database size={14}/>,  color: "#00ff88",  svcName: "angel-ariel" },
+  { id: "rafal",     name: "RAFAŁ",     domain: "rafal.ofshore.dev",     url: "https://rafal.ofshore.dev",     role: "AI Model Shepherd",    icon: <Bot size={14}/>,       color: "#00d4ff",  svcName: "angel-rafal" },
+  { id: "gabriel",   name: "GABRIEL",   domain: "gabriel.ofshore.dev",   url: "https://gabriel.ofshore.dev",   role: "API Gateway Warden",   icon: <Globe size={14}/>,     color: "#b44fff",  svcName: "angel-gabriel" },
+  { id: "michal",    name: "MICHAŁ",    domain: "michal.ofshore.dev",    url: "https://michal.ofshore.dev",    role: "Automation Overseer",  icon: <Zap size={14}/>,       color: "#ffd700",  svcName: "angel-michal" },
+  { id: "uriel",     name: "URIEL",     domain: "uriel.ofshore.dev",     url: "https://uriel.ofshore.dev",     role: "Security Sentinel",    icon: <Shield size={14}/>,    color: "#ff3366",  svcName: "angel-uriel" },
+  { id: "zadkiel",   name: "ZADKIEL",   domain: "zadkiel.ofshore.dev",   url: "https://zadkiel.ofshore.dev",   role: "Secrets Keeper",       icon: <Lock size={14}/>,      color: "#ff8c00",  svcName: "angel-zadkiel" },
+  { id: "jofiel",    name: "JOFIEL",    domain: "jofiel.ofshore.dev",    url: "https://jofiel.ofshore.dev",    role: "Frontend Architect",   icon: <Layers size={14}/>,    color: "#00ff88",  svcName: "angel-jofiel" },
+  { id: "chamuel",   name: "CHAMUEL",   domain: "chamuel.ofshore.dev",   url: "https://chamuel.ofshore.dev",   role: "Network Pathfinder",   icon: <Network size={14}/>,   color: "#00d4ff",  svcName: "angel-chamuel" },
+  { id: "kasjel",    name: "KASJEL",    domain: "kasjel.ofshore.dev",    url: "https://kasjel.ofshore.dev",    role: "Storage Custodian",    icon: <HardDrive size={14}/>, color: "#b44fff",  svcName: "angel-kasjel" },
+  { id: "metatron",  name: "METATRON",  domain: "metatron.ofshore.dev",  url: "https://metatron.ofshore.dev",  role: "Orchestration Master", icon: <Cpu size={14}/>,       color: "#ffd700",  svcName: "angel-metatron" },
+  { id: "sandalfon", name: "SANDALFON", domain: "sandalfon.ofshore.dev", url: "https://sandalfon.ofshore.dev", role: "Log Analyst",          icon: <BarChart3 size={14}/>, color: "#ff3366",  svcName: "angel-sandalfon" },
+  { id: "raziel",    name: "RAZIEL",    domain: "raziel.ofshore.dev",    url: "https://raziel.ofshore.dev",    role: "Incident Responder",   icon: <Flame size={14}/>,     color: "#ff8c00",  svcName: "angel-raziel" },
 ];
 
 const CORE_SERVICES: Omit<ServiceMetric, "status" | "latency" | "extra">[] = [
@@ -227,42 +230,55 @@ export default function Dashboard() {
   // ── Fetch Coolify ───────────────────────────────────────────────────────────
   const fetchCoolifyStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${COOLIFY_BASE}/applications`, {
-        headers: { Authorization: `Bearer ${COOLIFY_TOKEN}`, Accept: "application/json" },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const apps: any[] = Array.isArray(data) ? data : (data.data ?? []);
+      // Fetch applications
+      const [appsRes, svcsRes] = await Promise.all([
+        fetch(`${COOLIFY_BASE}/applications`, {
+          headers: { Authorization: `Bearer ${COOLIFY_TOKEN}`, Accept: "application/json" },
+          signal: AbortSignal.timeout(15000),
+        }),
+        fetch(`${COOLIFY_BASE}/services`, {
+          headers: { Authorization: `Bearer ${COOLIFY_TOKEN}`, Accept: "application/json" },
+          signal: AbortSignal.timeout(15000),
+        }),
+      ]);
+
+      if (!appsRes.ok) throw new Error(`HTTP ${appsRes.status}`);
+      const appsData = await appsRes.json();
+      const apps: any[] = Array.isArray(appsData) ? appsData : (appsData.data ?? []);
       setCoolifyApps(apps.length);
 
-      const healthy = apps.filter(a => {
-        const s = (a.status ?? "").toLowerCase();
-        return s.includes("running") && s.includes("healthy");
-      }).length;
       const running = apps.filter(a => (a.status ?? "").toLowerCase().includes("running")).length;
       setCoolifyHealthy(running);
-
-      // Map angel statuses
-      setAngels(prev => prev.map(angel => {
-        const app = apps.find(a =>
-          (a.name ?? "").toLowerCase().includes(angel.id.toLowerCase()) ||
-          (a.fqdn ?? "").includes(angel.domain)
-        );
-        if (!app) return angel;
-        const raw = (app.status ?? "unknown").toLowerCase();
-        let status: ServiceStatus = "unknown";
-        if (raw.includes("running") && raw.includes("healthy")) status = "healthy";
-        else if (raw.includes("running")) status = "degraded";
-        else if (raw.includes("exited") || raw.includes("error")) status = "error";
-        else if (raw.includes("starting") || raw.includes("restarting")) status = "starting";
-        return { ...angel, status, lastCheck: formatTime(), coolifyUuid: app.uuid };
-      }));
 
       // Coolify itself is healthy if API responded
       setServices(prev => prev.map(s =>
         s.id === "coolify" ? { ...s, status: "healthy" as ServiceStatus, latency: 0 } : s
       ));
+
+      // Map angel statuses from /services endpoint
+      if (svcsRes.ok) {
+        const svcsData = await svcsRes.json();
+        const svcs: any[] = Array.isArray(svcsData) ? svcsData : [];
+
+        setAngels(prev => prev.map(angel => {
+          // Find service by svcName (e.g. "angel-ariel") — prefer running over exited
+          const matches = svcs.filter(s =>
+            (s.name ?? "").toLowerCase() === (angel.svcName ?? angel.id).toLowerCase()
+          );
+          // Prefer running:unhealthy or running:healthy over exited
+          const svc = matches.find(s => (s.status ?? "").includes("running")) || matches[0];
+          if (!svc) return angel;
+
+          const raw = (svc.status ?? "unknown").toLowerCase();
+          let status: ServiceStatus = "unknown";
+          if (raw.includes("running") && raw.includes("healthy")) status = "healthy";
+          else if (raw.includes("running") && raw.includes("unhealthy")) status = "degraded";
+          else if (raw.includes("running")) status = "starting";
+          else if (raw.includes("exited") || raw.includes("error")) status = "error";
+          else if (raw.includes("starting") || raw.includes("restarting")) status = "starting";
+          return { ...angel, status, lastCheck: formatTime(), coolifyUuid: svc.uuid };
+        }));
+      }
 
       const unhealthy = apps.length - running;
       if (unhealthy > 10) addAlert("warning", `${unhealthy} aplikacji nie działa w Coolify`, "Coolify");
