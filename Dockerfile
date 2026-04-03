@@ -1,8 +1,16 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
-RUN npm install -g pnpm && pnpm install --frozen-lockfile
+
+# Install pnpm
+RUN npm install -g pnpm@latest
+
+# Copy all files first (needed for patches/)
 COPY . .
+
+# Install dependencies
+RUN pnpm install --no-frozen-lockfile
+
+# Build
 RUN pnpm run build
 
 FROM nginx:alpine
