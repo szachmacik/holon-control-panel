@@ -16,7 +16,8 @@
    5. Server stats — CPU/RAM estimates from container count
    ============================================================ */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import NeuralMesh, { type MeshNode, type MeshEdge } from "@/components/NeuralMesh";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Activity, Shield, Database, Cpu, Globe, Zap,
@@ -329,7 +330,7 @@ const PinAuth = ({ onAuth }: { onAuth: () => void }) => {
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Section = "angels" | "services" | "kairos" | "coord" | "infra" | "ops";
+type Section = "angels" | "services" | "kairos" | "coord" | "infra" | "ops" | "mesh";
 
 export default function Dashboard() {
   const [authed, setAuthed] = useState(() => sessionStorage.getItem("holon_auth") === "1");
@@ -586,6 +587,48 @@ export default function Dashboard() {
   }, [autoRefresh, refresh]);
 
   // ── Derived stats ───────────────────────────────────────────────────────────
+  // ── Neural Mesh data derived from live angel/archangel state ──────────────
+  const meshNodes = useMemo<MeshNode[]>(() => [
+    // Tier 0 — Mesh Orchestrator (virtual node)
+    { id: "orchestrator", name: "HOLON MESH", tier: 0, status: "healthy", domain: "mesh.ofshore.dev", color: "#b44fff" },
+    // Tier 1 — Archangels
+    ...archangels.map(a => ({
+      id: a.id, name: a.name, tier: 1 as const,
+      status: (a.status === "healthy" ? "healthy" : a.status === "degraded" ? "degraded" : a.status === "error" ? "offline" : "unknown") as MeshNode["status"],
+      domain: a.domain, color: a.color, latency: a.latency,
+    })),
+    // Tier 2 — Standard Angels
+    ...angels.map(a => ({
+      id: a.id, name: a.name, tier: 2 as const,
+      status: (a.status === "healthy" ? "healthy" : a.status === "degraded" ? "degraded" : a.status === "error" ? "offline" : "unknown") as MeshNode["status"],
+      domain: a.domain, color: a.color, latency: a.latency,
+    })),
+  ], [archangels, angels]);
+
+  const meshEdges = useMemo<MeshEdge[]>(() => {
+    const edges: MeshEdge[] = [];
+    // Orchestrator ↔ each Archangel (full mesh)
+    archangels.forEach(a => {
+      edges.push({ source: "orchestrator", target: a.id, weight: 0.9, active: a.status !== "error", latency: a.latency });
+    });
+    // Archangel ↔ Archangel (full mesh between tier-1)
+    for (let i = 0; i < archangels.length; i++) {
+      for (let j = i + 1; j < archangels.length; j++) {
+        edges.push({ source: archangels[i].id, target: archangels[j].id, weight: 0.6, active: archangels[i].status !== "error" && archangels[j].status !== "error" });
+      }
+    }
+    // Each Archangel → 3 Angels (round-robin assignment)
+    angels.forEach((angel, idx) => {
+      const archIdx = idx % archangels.length;
+      const arch = archangels[archIdx];
+      if (arch) edges.push({ source: arch.id, target: angel.id, weight: 0.4, active: angel.status !== "error" });
+      // Cross-connect to adjacent archangel for redundancy
+      const arch2 = archangels[(archIdx + 1) % archangels.length];
+      if (arch2) edges.push({ source: arch2.id, target: angel.id, weight: 0.2, active: angel.status !== "error" && arch2.status !== "error" });
+    });
+    return edges;
+  }, [archangels, angels]);
+
   const healthyArchangels = archangels.filter(a => a.status === "healthy").length;
   const healthyAngels   = angels.filter(a => a.status === "healthy").length;
   const errorAngels     = angels.filter(a => a.status === "error").length;
@@ -618,6 +661,7 @@ export default function Dashboard() {
     { id: "kairos",   label: "KAIROS",       icon: <TrendingUp size={13}/>,   badge: kairos?.pending },
     { id: "coord",    label: "KOORDYNACJA",  icon: <MessageSquare size={13}/>, badge: coordMessages.length },
     { id: "ops",      label: "OPERACJE",     icon: <Wrench size={13}/> },
+    { id: "mesh",     label: "NEURAL MESH",  icon: <GitBranch size={13}/>, badge: "LIVE" },
   ];
 
   return (
@@ -1505,6 +1549,51 @@ export default function Dashboard() {
                       </div>
                     ))}
                   </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ── Neural Mesh Section ── */}
+            {activeSection === "mesh" && (
+              <motion.div key="mesh" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="flex items-center gap-2">
+                    <GitBranch size={14} className="text-[#b44fff]" />
+                    <span className="mono text-[13px] font-bold tracking-[0.15em] text-[#b44fff]">HOLON NEURAL MESH</span>
+                  </div>
+                  <div className="flex-1 h-px" style={{ background: "linear-gradient(90deg, #b44fff30, transparent)" }} />
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#00ff88] animate-pulse" />
+                    <span className="mono text-[9px] text-[#00ff88]">LIVE</span>
+                  </div>
+                </div>
+                <p className="text-[#333355] text-[10px] mono mb-4 leading-relaxed">
+                  Sieć neuronowa Holon Mesh — {meshNodes.length} węzłów · {meshEdges.filter(e=>e.active).length} aktywnych połączeń ·
+                  Routing wielocieżzkowy z automatycznym failover · Sygnalizacja równoległa
+                </p>
+                <NeuralMesh
+                  nodes={meshNodes}
+                  edges={meshEdges}
+                  width={820}
+                  height={480}
+                  onNodeClick={(node) => {
+                    addAlert("info", `Wybrany węzeł: ${node.name} [${node.status}] — ${node.domain}`, "Neural Mesh");
+                  }}
+                />
+
+                {/* Mesh topology info */}
+                <div className="mt-4 grid grid-cols-3 gap-3">
+                  {[
+                    { label: "TOPOLOGIA", value: "FULL MESH", sub: "Tier-0 ↔ Tier-1 ↔ Tier-2", color: "#b44fff" },
+                    { label: "ROUTING", value: "MULTI-PATH", sub: "Shortest + Redundant", color: "#00d4ff" },
+                    { label: "FAILOVER", value: "AUTO", sub: "Dead node bypass", color: "#00ff88" },
+                  ].map(s => (
+                    <div key={s.label} className="noc-card rounded-sm p-3">
+                      <div className="mono text-[9px] text-[#333355] tracking-widest mb-1">{s.label}</div>
+                      <div className="mono text-[13px] font-bold" style={{ color: s.color }}>{s.value}</div>
+                      <div className="mono text-[8px] text-[#222244] mt-0.5">{s.sub}</div>
+                    </div>
+                  ))}
                 </div>
               </motion.div>
             )}
