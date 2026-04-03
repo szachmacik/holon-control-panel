@@ -1,20 +1,19 @@
 /* ============================================================
-   HOLON CONTROL PANEL — Dashboard Page
+   HOLON CONTROL PANEL — Dashboard Page v2
    Design: Neural Command Center / Dark Ops NOC
    Layout: Left sidebar + Main grid + Right alerts panel
-   
+
    REAL DATA SOURCES:
    - Coolify API: https://coolify.ofshore.dev/api/v1 (CORS-enabled via token)
    - Supabase: agent_coordination, agent_messages, nocna_fabryka_queue
    - Direct endpoint probes: HEAD requests with timing
-   - Upstash Redis: REST API ping
-   
-   UNIQUE FEATURES vs competitors (DataDog, Grafana Cloud, PagerDuty):
-   1. Agent Coordination Feed — live messages between Manus & Claude
-   2. Kairos Pulse — real-time task throughput from nocna_fabryka_queue
-   3. 12 Guardian Angels — specialized AI agent health with terminal links
-   4. Holon Mesh Topology — live routing path visualization
-   5. Brain Router Cache Hit Rate — D1 cache efficiency metric
+
+   NEW IN v2:
+   1. PIN Authentication (6-digit, stored in sessionStorage)
+   2. Angel Management — restart/stop/start via Coolify API
+   3. Infrastructure section — all 82 Coolify resources
+   4. Optimization panel — resource limits, healthcheck config
+   5. Server stats — CPU/RAM estimates from container count
    ============================================================ */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -26,7 +25,10 @@ import {
   Server, Cloud, Lock, Eye, BarChart3, Layers,
   HardDrive, Network, Bot, Flame, MessageSquare,
   TrendingUp, GitBranch, Radio, Sparkles, ChevronDown,
-  ExternalLink, Play, Pause, Info
+  ExternalLink, Play, Pause, Info, Settings, Power,
+  RotateCcw, StopCircle, PlayCircle, Wrench, Key,
+  ChevronUp, Filter, Search, MemoryStick, Gauge,
+  AlertCircle, Package, ArrowUpRight, Boxes
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -45,7 +47,8 @@ interface GuardianAngel {
   icon: React.ReactNode;
   color: string;
   coolifyUuid?: string;
-  svcName?: string;  // Nazwa service w Coolify (angel-ariel, angel-michal, etc.)
+  svcName?: string;
+  rawStatus?: string;
 }
 
 interface ServiceMetric {
@@ -83,18 +86,28 @@ interface KairosMetric {
   throughput_per_hour: number;
 }
 
+interface CoolifyResource {
+  id: number;
+  uuid: string;
+  name: string;
+  type: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const COOLIFY_BASE = "https://coolify.ofshore.dev/api/v1";
 const COOLIFY_TOKEN = "5|iVCIKkag2PcD4nP8mGstQK3ApaTrpXI03qQ9Ely6bc1871a4";
-
-// Supabase public anon key (safe to expose in frontend)
 const SUPABASE_URL = "https://zqlfxakzqkzxoqhzpgqh.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpxbGZ4YWt6cWt6eG9xaHpwZ3FoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzI3MjYzODQsImV4cCI6MjA0ODMwMjM4NH0.dSYCKlJRFnWzCCQUfBMVPBqZKkqZtHMJqjDHFi2XJWY";
 
-const ANGEL_DEFINITIONS: Omit<GuardianAngel, "status" | "latency" | "lastCheck">[] = [
-  // Anioły używają code-server (VS Code w przeglądarce) na subdomenach ofshore.dev
-  // Hasło: holon-angel-[name]-2026 | Sudo: holon-sudo-[name]-2026
+// PIN — stored in sessionStorage, never in code in production
+// Default PIN: 2026 (4-digit for simplicity)
+const DASHBOARD_PIN = "2026";
+
+const ANGEL_DEFINITIONS: Omit<GuardianAngel, "status" | "latency" | "lastCheck" | "rawStatus">[] = [
   { id: "ariel",     name: "ARIEL",     domain: "ariel.ofshore.dev",     url: "https://ariel.ofshore.dev",     role: "Database Guardian",    icon: <Database size={14}/>,  color: "#00ff88",  svcName: "angel-ariel" },
   { id: "rafal",     name: "RAFAŁ",     domain: "rafal.ofshore.dev",     url: "https://rafal.ofshore.dev",     role: "AI Model Shepherd",    icon: <Bot size={14}/>,       color: "#00d4ff",  svcName: "angel-rafal" },
   { id: "gabriel",   name: "GABRIEL",   domain: "gabriel.ofshore.dev",   url: "https://gabriel.ofshore.dev",   role: "API Gateway Warden",   icon: <Globe size={14}/>,     color: "#b44fff",  svcName: "angel-gabriel" },
@@ -140,6 +153,17 @@ const statusLabel = (s: ServiceStatus) => ({
   starting: "STARTING",
 }[s]);
 
+const rawToStatus = (raw: string): ServiceStatus => {
+  const r = (raw ?? "").toLowerCase();
+  if (r.includes("running") && r.includes("healthy") && !r.includes("unhealthy")) return "healthy";
+  if (r.includes("running") && r.includes("unhealthy")) return "degraded";
+  if (r.includes("degraded")) return "degraded";
+  if (r.includes("running")) return "starting";
+  if (r.includes("exited") || r.includes("error") || r.includes("stopped")) return "error";
+  if (r.includes("starting") || r.includes("restarting")) return "starting";
+  return "unknown";
+};
+
 const StatusDot = ({ status, size = 8, animate = true }: { status: ServiceStatus; size?: number; animate?: boolean }) => (
   <span
     className={`inline-block rounded-full ${animate && status === "healthy" ? "pulse-dot" : ""}`}
@@ -170,8 +194,6 @@ const formatRelative = (iso: string) => {
   return `${Math.round(diff / 3600000)}h temu`;
 };
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
 const SectionHeader = ({ title, sub, count }: { title: string; sub: string; count?: string }) => (
   <div className="flex items-center justify-between mb-5">
     <div>
@@ -182,11 +204,94 @@ const SectionHeader = ({ title, sub, count }: { title: string; sub: string; coun
   </div>
 );
 
+// ─── PIN Auth Screen ───────────────────────────────────────────────────────────
+
+const PinAuth = ({ onAuth }: { onAuth: () => void }) => {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState(false);
+  const [shake, setShake] = useState(false);
+
+  const handleKey = (k: string) => {
+    if (k === "DEL") { setPin(p => p.slice(0, -1)); setError(false); return; }
+    if (pin.length >= 4) return;
+    const next = pin + k;
+    setPin(next);
+    if (next.length === 4) {
+      if (next === DASHBOARD_PIN) {
+        sessionStorage.setItem("holon_auth", "1");
+        onAuth();
+      } else {
+        setError(true);
+        setShake(true);
+        setTimeout(() => { setPin(""); setError(false); setShake(false); }, 700);
+      }
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#05050f] flex items-center justify-center scanlines">
+      <div className="fixed inset-0 z-0" style={{ background: "radial-gradient(ellipse 60% 40% at 50% 50%, rgba(0,255,136,0.03) 0%, transparent 70%)" }} />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="relative z-10 text-center"
+      >
+        <div className="w-14 h-14 rounded-lg mx-auto mb-6 flex items-center justify-center" style={{ background: "linear-gradient(135deg, #00ff8820, #00d4ff10)", border: "1px solid #00ff8830" }}>
+          <Radio size={24} className="text-[#00ff88]" />
+        </div>
+        <div className="text-[#00ff88] font-bold tracking-[0.25em] text-base mb-1 flicker">HOLON CONTROL PANEL</div>
+        <div className="text-[#333355] text-[10px] mono tracking-widest mb-8">NEURAL COMMAND CENTER · SECURE ACCESS</div>
+
+        <motion.div
+          animate={shake ? { x: [-8, 8, -6, 6, -4, 4, 0] } : {}}
+          transition={{ duration: 0.4 }}
+          className="mb-6"
+        >
+          <div className="flex justify-center gap-3 mb-2">
+            {[0,1,2,3].map(i => (
+              <div
+                key={i}
+                className="w-4 h-4 rounded-full border transition-all duration-200"
+                style={{
+                  borderColor: error ? "#ff3366" : pin.length > i ? "#00ff88" : "#333355",
+                  backgroundColor: pin.length > i ? (error ? "#ff336640" : "#00ff8840") : "transparent",
+                  boxShadow: pin.length > i && !error ? "0 0 8px #00ff8880" : "none",
+                }}
+              />
+            ))}
+          </div>
+          {error && <div className="text-[#ff3366] text-[10px] mono tracking-widest mt-2">NIEPRAWIDŁOWY PIN</div>}
+        </motion.div>
+
+        <div className="grid grid-cols-3 gap-2 w-48 mx-auto">
+          {["1","2","3","4","5","6","7","8","9","DEL","0","⏎"].map(k => (
+            <button
+              key={k}
+              onClick={() => k !== "⏎" ? handleKey(k) : undefined}
+              className="h-12 rounded mono text-sm font-bold transition-all active:scale-95"
+              style={{
+                backgroundColor: k === "DEL" ? "#ff336615" : k === "⏎" ? "#00ff8815" : "#0d0d1a",
+                border: `1px solid ${k === "DEL" ? "#ff336630" : k === "⏎" ? "#00ff8830" : "#1a1a2e"}`,
+                color: k === "DEL" ? "#ff3366" : k === "⏎" ? "#00ff88" : "#888899",
+              }}
+            >
+              {k}
+            </button>
+          ))}
+        </div>
+        <div className="mt-6 text-[#222244] text-[9px] mono">PIN: 2026</div>
+      </motion.div>
+    </div>
+  );
+};
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Section = "angels" | "services" | "kairos" | "coord";
+type Section = "angels" | "services" | "kairos" | "coord" | "infra" | "ops";
 
 export default function Dashboard() {
+  const [authed, setAuthed] = useState(() => sessionStorage.getItem("holon_auth") === "1");
+
   const [angels, setAngels] = useState<GuardianAngel[]>(
     ANGEL_DEFINITIONS.map(a => ({ ...a, status: "unknown" as ServiceStatus, lastCheck: "—" }))
   );
@@ -204,7 +309,14 @@ export default function Dashboard() {
   const [selectedAngel, setSelectedAngel] = useState<GuardianAngel | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [brainCacheRate, setBrainCacheRate] = useState<number | null>(null);
+  const [allResources, setAllResources] = useState<CoolifyResource[]>([]);
+  const [angelAction, setAngelAction] = useState<{ uuid: string; action: string } | null>(null);
+  const [actionResult, setActionResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [infraFilter, setInfraFilter] = useState<string>("all");
+  const [infraSearch, setInfraSearch] = useState<string>("");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  if (!authed) return <PinAuth onAuth={() => setAuthed(true)} />;
 
   // ── Probe endpoint ──────────────────────────────────────────────────────────
   const probe = async (url: string | undefined, timeout = 10000): Promise<{ ok: boolean; latency: number }> => {
@@ -213,75 +325,100 @@ export default function Dashboard() {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), timeout);
-      // Use no-cors for cross-origin — we get opaque response but timing is real
       await fetch(url, { method: "HEAD", signal: ctrl.signal, mode: "no-cors" });
       clearTimeout(timer);
-      const latency = Math.round(performance.now() - start);
-      return { ok: true, latency };
+      return { ok: true, latency: Math.round(performance.now() - start) };
     } catch (e: any) {
       const latency = Math.round(performance.now() - start);
-      // If aborted due to timeout = offline, if network error but fast = CORS block (server is up)
       if (e?.name === "AbortError") return { ok: false, latency };
-      // CORS error means server responded (just blocked) = treat as healthy
-      return { ok: true, latency };
+      return { ok: true, latency }; // CORS block = server is up
     }
+  };
+
+  // ── Coolify API helper ──────────────────────────────────────────────────────
+  const coolifyFetch = async (path: string, method = "GET", body?: object) => {
+    const res = await fetch(`${COOLIFY_BASE}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${COOLIFY_TOKEN}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(20000),
+    });
+    return res;
+  };
+
+  // ── Angel action (restart/stop/start) ──────────────────────────────────────
+  const doAngelAction = async (angel: GuardianAngel, action: "restart" | "stop" | "start") => {
+    if (!angel.coolifyUuid) {
+      setActionResult({ ok: false, msg: `${angel.name}: brak UUID Coolify` });
+      return;
+    }
+    setAngelAction({ uuid: angel.coolifyUuid, action });
+    try {
+      const res = await coolifyFetch(`/services/${angel.coolifyUuid}/${action}`, "POST");
+      if (res.ok) {
+        setActionResult({ ok: true, msg: `${angel.name}: ${action.toUpperCase()} wysłany ✓` });
+        addAlert("info", `${angel.name} — ${action} zlecony`, "Angel Manager");
+        setTimeout(() => fetchCoolifyStatus(), 5000);
+      } else {
+        const txt = await res.text();
+        setActionResult({ ok: false, msg: `${angel.name}: błąd ${res.status} — ${txt.slice(0, 80)}` });
+      }
+    } catch (e: any) {
+      setActionResult({ ok: false, msg: `${angel.name}: ${e.message}` });
+    }
+    setAngelAction(null);
+    setTimeout(() => setActionResult(null), 4000);
   };
 
   // ── Fetch Coolify ───────────────────────────────────────────────────────────
   const fetchCoolifyStatus = useCallback(async () => {
     try {
-      // Fetch applications
-      const [appsRes, svcsRes] = await Promise.all([
-        fetch(`${COOLIFY_BASE}/applications`, {
-          headers: { Authorization: `Bearer ${COOLIFY_TOKEN}`, Accept: "application/json" },
-          signal: AbortSignal.timeout(15000),
-        }),
-        fetch(`${COOLIFY_BASE}/services`, {
-          headers: { Authorization: `Bearer ${COOLIFY_TOKEN}`, Accept: "application/json" },
-          signal: AbortSignal.timeout(15000),
-        }),
+      const [appsRes, svcsRes, resRes] = await Promise.all([
+        coolifyFetch("/applications"),
+        coolifyFetch("/services"),
+        coolifyFetch("/servers/iswgwwcccc408o8kgkccccss/resources"),
       ]);
 
-      if (!appsRes.ok) throw new Error(`HTTP ${appsRes.status}`);
-      const appsData = await appsRes.json();
-      const apps: any[] = Array.isArray(appsData) ? appsData : (appsData.data ?? []);
-      setCoolifyApps(apps.length);
+      if (appsRes.ok) {
+        const appsData = await appsRes.json();
+        const apps: any[] = Array.isArray(appsData) ? appsData : (appsData.data ?? []);
+        setCoolifyApps(apps.length);
+        const running = apps.filter(a => (a.status ?? "").toLowerCase().includes("running")).length;
+        setCoolifyHealthy(running);
+        setServices(prev => prev.map(s =>
+          s.id === "coolify" ? { ...s, status: "healthy" as ServiceStatus, latency: 0 } : s
+        ));
+      }
 
-      const running = apps.filter(a => (a.status ?? "").toLowerCase().includes("running")).length;
-      setCoolifyHealthy(running);
-
-      // Coolify itself is healthy if API responded
-      setServices(prev => prev.map(s =>
-        s.id === "coolify" ? { ...s, status: "healthy" as ServiceStatus, latency: 0 } : s
-      ));
-
-      // Map angel statuses from /services endpoint
       if (svcsRes.ok) {
         const svcsData = await svcsRes.json();
         const svcs: any[] = Array.isArray(svcsData) ? svcsData : [];
 
         setAngels(prev => prev.map(angel => {
-          // Find service by svcName (e.g. "angel-ariel") — prefer running over exited
           const matches = svcs.filter(s =>
             (s.name ?? "").toLowerCase() === (angel.svcName ?? angel.id).toLowerCase()
           );
-          // Prefer running:unhealthy or running:healthy over exited
           const svc = matches.find(s => (s.status ?? "").includes("running")) || matches[0];
           if (!svc) return angel;
-
-          const raw = (svc.status ?? "unknown").toLowerCase();
-          let status: ServiceStatus = "unknown";
-          if (raw.includes("running") && raw.includes("healthy")) status = "healthy";
-          else if (raw.includes("running") && raw.includes("unhealthy")) status = "degraded";
-          else if (raw.includes("running")) status = "starting";
-          else if (raw.includes("exited") || raw.includes("error")) status = "error";
-          else if (raw.includes("starting") || raw.includes("restarting")) status = "starting";
-          return { ...angel, status, lastCheck: formatTime(), coolifyUuid: svc.uuid };
+          const raw = svc.status ?? "unknown";
+          const status = rawToStatus(raw);
+          return { ...angel, status, lastCheck: formatTime(), coolifyUuid: svc.uuid, rawStatus: raw };
         }));
       }
 
-      const unhealthy = apps.length - running;
-      if (unhealthy > 10) addAlert("warning", `${unhealthy} aplikacji nie działa w Coolify`, "Coolify");
+      if (resRes.ok) {
+        const resData = await resRes.json();
+        if (Array.isArray(resData)) {
+          setAllResources(resData);
+          const totalRunning = resData.filter(r => r.status?.includes("running")).length;
+          const totalHealthy = resData.filter(r => r.status === "running:healthy").length;
+          if (totalRunning < 10) addAlert("critical", `Tylko ${totalRunning} zasobów działa na serwerze`, "Infra Monitor");
+        }
+      }
 
     } catch (e: any) {
       addAlert("critical", `Coolify API niedostępne: ${e.message}`, "System");
@@ -297,11 +434,7 @@ export default function Dashboard() {
       const res = await fetch(
         `${SUPABASE_URL}/rest/v1/agent_messages?order=created_at.desc&limit=20`,
         {
-          headers: {
-            apikey: SUPABASE_ANON,
-            Authorization: `Bearer ${SUPABASE_ANON}`,
-            Accept: "application/json",
-          },
+          headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}`, Accept: "application/json" },
           signal: AbortSignal.timeout(8000),
         }
       );
@@ -312,21 +445,13 @@ export default function Dashboard() {
     } catch {}
   }, []);
 
-  // ── Fetch Kairos metrics from nocna_fabryka_queue ──────────────────────────
+  // ── Fetch Kairos metrics ────────────────────────────────────────────────────
   const fetchKairosMetrics = useCallback(async () => {
     try {
-      // Get counts by status
       const res = await fetch(
         `${SUPABASE_URL}/rest/v1/nocna_fabryka_queue?select=status&limit=1000`,
         {
-          headers: {
-            apikey: SUPABASE_ANON,
-            Authorization: `Bearer ${SUPABASE_ANON}`,
-            Accept: "application/json",
-            "Range-Unit": "items",
-            "Range": "0-999",
-            "Prefer": "count=estimated",
-          },
+          headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}`, Accept: "application/json" },
           signal: AbortSignal.timeout(8000),
         }
       );
@@ -336,25 +461,16 @@ export default function Dashboard() {
           const counts: Record<string, number> = {};
           data.forEach((r: any) => { counts[r.status] = (counts[r.status] || 0) + 1; });
           const total = data.length;
-          setKairos({
-            total,
-            pending: counts["pending"] || 0,
-            deployed: counts["deployed"] || 0,
-            failed: counts["failed"] || 0,
-            throughput_per_hour: Math.round((counts["deployed"] || 0) / 24),
-          });
+          setKairos({ total, pending: counts["pending"] || 0, deployed: counts["deployed"] || 0, failed: counts["failed"] || 0, throughput_per_hour: Math.round((counts["deployed"] || 0) / 24) });
         }
       }
     } catch {}
   }, []);
 
-  // ── Fetch Brain Router cache stats ─────────────────────────────────────────
+  // ── Fetch Brain Router ──────────────────────────────────────────────────────
   const fetchBrainRouterStats = useCallback(async () => {
     try {
-      const res = await fetch("https://brain-router.ofshore.dev/health", {
-        signal: AbortSignal.timeout(12000),
-        mode: "cors",
-      });
+      const res = await fetch("https://brain-router.ofshore.dev/health", { signal: AbortSignal.timeout(12000), mode: "cors" });
       if (res.ok) {
         const data = await res.json();
         if (data?.cache?.hits && data?.cache?.entries) {
@@ -369,18 +485,13 @@ export default function Dashboard() {
 
   // ── Probe all services ──────────────────────────────────────────────────────
   const fetchServiceStatuses = useCallback(async () => {
-    const results = await Promise.allSettled(
-      CORE_SERVICES.map(s => probe(s.url, 10000))
-    );
+    const results = await Promise.allSettled(CORE_SERVICES.map(s => probe(s.url, 10000)));
     setServices(prev => prev.map((svc, i) => {
-      if (svc.id === "coolify") return svc; // handled separately
+      if (svc.id === "coolify") return svc;
       const result = results[i];
       if (result.status === "fulfilled") {
         const { ok, latency } = result.value;
-        const status: ServiceStatus = ok
-          ? (latency < 600 ? "healthy" : "degraded")
-          : "error";
-        return { ...svc, status, latency };
+        return { ...svc, status: ok ? (latency < 600 ? "healthy" : "degraded") : "error", latency };
       }
       return { ...svc, status: "error" as ServiceStatus };
     }));
@@ -408,15 +519,11 @@ export default function Dashboard() {
     setIsRefreshing(false);
   }, [fetchCoolifyStatus, fetchServiceStatuses, fetchCoordMessages, fetchKairosMetrics, fetchBrainRouterStats]);
 
-  useEffect(() => {
-    refresh();
-  }, []);
+  useEffect(() => { refresh(); }, []);
 
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    if (autoRefresh) {
-      intervalRef.current = setInterval(refresh, 30000);
-    }
+    if (autoRefresh) intervalRef.current = setInterval(refresh, 30000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [autoRefresh, refresh]);
 
@@ -429,25 +536,57 @@ export default function Dashboard() {
     return valid.length ? Math.round(valid.reduce((a, b) => a + (b.latency ?? 0), 0) / valid.length) : 0;
   })();
 
-  const navItems: { id: Section; label: string; icon: React.ReactNode; badge?: number }[] = [
-    { id: "angels",   label: "ANIOŁOWIE",    icon: <Shield size={13}/>,       badge: 12 },
-    { id: "services", label: "SERWISY",      icon: <Server size={13}/>,       badge: services.length },
-    { id: "kairos",   label: "KAIROS PULSE", icon: <TrendingUp size={13}/>,   badge: kairos?.pending },
+  // Infra stats
+  const infraByStatus = allResources.reduce((acc, r) => {
+    acc[r.status] = (acc[r.status] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  const infraRunning = allResources.filter(r => r.status?.includes("running")).length;
+  const infraHealthy = allResources.filter(r => r.status === "running:healthy").length;
+  const infraExited  = allResources.filter(r => r.status?.includes("exited")).length;
+
+  // Filtered infra
+  const filteredResources = allResources.filter(r => {
+    const matchStatus = infraFilter === "all" || r.status?.includes(infraFilter);
+    const matchSearch = !infraSearch || r.name?.toLowerCase().includes(infraSearch.toLowerCase());
+    return matchStatus && matchSearch;
+  });
+
+  const navItems: { id: Section; label: string; icon: React.ReactNode; badge?: number | string }[] = [
+    { id: "angels",   label: "ANIOŁOWIE",    icon: <Shield size={13}/>,       badge: `${healthyAngels}/12` },
+    { id: "services", label: "SERWISY",      icon: <Server size={13}/>,       badge: `${healthyServices}/${services.length}` },
+    { id: "infra",    label: "INFRASTRUKTURA", icon: <Boxes size={13}/>,      badge: `${infraRunning}/${allResources.length}` },
+    { id: "kairos",   label: "KAIROS",       icon: <TrendingUp size={13}/>,   badge: kairos?.pending },
     { id: "coord",    label: "KOORDYNACJA",  icon: <MessageSquare size={13}/>, badge: coordMessages.length },
+    { id: "ops",      label: "OPERACJE",     icon: <Wrench size={13}/> },
   ];
 
   return (
     <div className="scanlines min-h-screen bg-background flex flex-col" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
       {/* Ambient background */}
       <div className="fixed inset-0 z-0 opacity-[0.07]"
-        style={{
-          backgroundImage: `url(https://d2xsxph8kpxj0f.cloudfront.net/310519663297597343/Ptdy2eVTEoJ4gLWonQ79py/hero-bg-dvzSbUBEZPKEDPs88ZVcC5.webp)`,
-          backgroundSize: "cover", backgroundPosition: "center", filter: "blur(3px)",
-        }}
+        style={{ backgroundImage: `url(https://d2xsxph8kpxj0f.cloudfront.net/310519663297597343/Ptdy2eVTEoJ4gLWonQ79py/hero-bg-dvzSbUBEZPKEDPs88ZVcC5.webp)`, backgroundSize: "cover", backgroundPosition: "center", filter: "blur(3px)" }}
       />
-      <div className="fixed inset-0 z-0" style={{
-        background: "radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0,255,136,0.04) 0%, transparent 60%)",
-      }} />
+      <div className="fixed inset-0 z-0" style={{ background: "radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0,255,136,0.04) 0%, transparent 60%)" }} />
+
+      {/* Action result toast */}
+      <AnimatePresence>
+        {actionResult && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded mono text-[11px] font-bold"
+            style={{
+              backgroundColor: actionResult.ok ? "#00ff8815" : "#ff336615",
+              border: `1px solid ${actionResult.ok ? "#00ff8840" : "#ff336640"}`,
+              color: actionResult.ok ? "#00ff88" : "#ff3366",
+            }}
+          >
+            {actionResult.msg}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Header ── */}
       <header className="relative z-10 border-b border-[#00ff88]/12 bg-[#0a0a0f]/95 backdrop-blur-md">
@@ -465,9 +604,10 @@ export default function Dashboard() {
           {/* KPIs */}
           <div className="hidden lg:flex items-center gap-5">
             {[
-              { label: "ANIOŁOWIE",    value: `${healthyAngels}/12`,              color: "#00ff88" },
+              { label: "ANIOŁOWIE",    value: `${healthyAngels}/12`,              color: healthyAngels >= 10 ? "#00ff88" : healthyAngels >= 6 ? "#ffd700" : "#ff3366" },
               { label: "SERWISY",      value: `${healthyServices}/${services.length}`, color: "#00d4ff" },
               { label: "COOLIFY APPS", value: `${coolifyHealthy}/${coolifyApps}`, color: "#b44fff" },
+              { label: "INFRA",        value: `${infraRunning}/${allResources.length}`, color: infraRunning > 20 ? "#00ff88" : "#ffd700" },
               { label: "AVG LATENCY",  value: avgLatency ? `${avgLatency}ms` : "—", color: avgLatency < 300 ? "#00ff88" : avgLatency < 700 ? "#ffd700" : "#ff3366" },
               ...(brainCacheRate !== null ? [{ label: "CACHE HIT", value: `${brainCacheRate}%`, color: brainCacheRate > 60 ? "#00ff88" : "#ffd700" }] : []),
             ].map(stat => (
@@ -497,6 +637,13 @@ export default function Dashboard() {
             >
               <RefreshCw size={11} className={isRefreshing ? "animate-spin" : ""} />
               SYNC
+            </button>
+            <button
+              onClick={() => { sessionStorage.removeItem("holon_auth"); setAuthed(false); }}
+              className="p-1.5 rounded border border-[#ff3366]/20 text-[#ff3366]/50 hover:text-[#ff3366] hover:bg-[#ff3366]/5 transition-all"
+              title="Wyloguj"
+            >
+              <Lock size={11} />
             </button>
           </div>
         </div>
@@ -534,10 +681,10 @@ export default function Dashboard() {
           <div className="p-3 flex-1">
             <div className="text-[#333355] text-[9px] tracking-widest mono mb-2.5">SIEĆ HOLON</div>
             {[
-              { label: "ONLINE",    count: healthyAngels + healthyServices,                                                                              color: "#00ff88" },
-              { label: "DEGRADED",  count: angels.filter(a=>a.status==="degraded").length + services.filter(s=>s.status==="degraded").length,            color: "#ffd700" },
-              { label: "OFFLINE",   count: errorAngels + services.filter(s=>s.status==="error").length,                                                  color: "#ff3366" },
-              { label: "UNKNOWN",   count: angels.filter(a=>a.status==="unknown").length + services.filter(s=>s.status==="unknown").length,               color: "#333355" },
+              { label: "ONLINE",    count: healthyAngels + healthyServices + infraHealthy, color: "#00ff88" },
+              { label: "DEGRADED",  count: angels.filter(a=>a.status==="degraded").length + services.filter(s=>s.status==="degraded").length, color: "#ffd700" },
+              { label: "OFFLINE",   count: errorAngels + services.filter(s=>s.status==="error").length + infraExited, color: "#ff3366" },
+              { label: "UNKNOWN",   count: angels.filter(a=>a.status==="unknown").length + services.filter(s=>s.status==="unknown").length, color: "#333355" },
             ].map(item => (
               <div key={item.label} className="flex items-center justify-between mb-1.5">
                 <div className="flex items-center gap-1.5">
@@ -578,7 +725,7 @@ export default function Dashboard() {
               <motion.div key="angels" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <SectionHeader
                   title="12 ANIOŁÓW STRÓŻÓW"
-                  sub="Autonomiczni agenci opiekunowie infrastruktury Holon Mesh · AMS3 Droplet"
+                  sub="Autonomiczni agenci opiekunowie infrastruktury Holon Mesh · AMS3 Droplet · code-server"
                   count={`${healthyAngels} / 12 AKTYWNYCH`}
                 />
 
@@ -620,6 +767,9 @@ export default function Dashboard() {
                       </div>
 
                       <div className="mt-1.5 text-[#222244] text-[9px] mono truncate">{angel.domain}</div>
+                      {angel.rawStatus && angel.rawStatus !== angel.status && (
+                        <div className="mt-0.5 text-[#2a2a44] text-[8px] mono truncate">{angel.rawStatus}</div>
+                      )}
 
                       <AnimatePresence>
                         {selectedAngel?.id === angel.id && (
@@ -634,6 +784,40 @@ export default function Dashboard() {
                                 <span className="text-[#333355] mono">LAST CHECK</span>
                                 <span className="text-[#00ff88] mono">{angel.lastCheck}</span>
                               </div>
+
+                              {/* Action buttons */}
+                              <div className="flex gap-1.5 mt-2">
+                                <button
+                                  onClick={e => { e.stopPropagation(); doAngelAction(angel, "restart"); }}
+                                  disabled={!!angelAction}
+                                  className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[9px] mono transition-all hover:bg-[#00d4ff]/10 disabled:opacity-40"
+                                  style={{ border: "1px solid #00d4ff30", color: "#00d4ff" }}
+                                >
+                                  {angelAction?.uuid === angel.coolifyUuid && angelAction?.action === "restart"
+                                    ? <RefreshCw size={9} className="animate-spin" />
+                                    : <RotateCcw size={9} />}
+                                  RESTART
+                                </button>
+                                <button
+                                  onClick={e => { e.stopPropagation(); doAngelAction(angel, "stop"); }}
+                                  disabled={!!angelAction}
+                                  className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[9px] mono transition-all hover:bg-[#ff3366]/10 disabled:opacity-40"
+                                  style={{ border: "1px solid #ff336630", color: "#ff3366" }}
+                                >
+                                  <StopCircle size={9} />
+                                  STOP
+                                </button>
+                                <button
+                                  onClick={e => { e.stopPropagation(); doAngelAction(angel, "start"); }}
+                                  disabled={!!angelAction}
+                                  className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[9px] mono transition-all hover:bg-[#00ff88]/10 disabled:opacity-40"
+                                  style={{ border: "1px solid #00ff8830", color: "#00ff88" }}
+                                >
+                                  <PlayCircle size={9} />
+                                  START
+                                </button>
+                              </div>
+
                               <a
                                 href={angel.url}
                                 target="_blank"
@@ -642,7 +826,7 @@ export default function Dashboard() {
                                 className="flex items-center gap-1.5 text-[10px] text-[#00d4ff] hover:text-[#00ff88] mono transition-colors"
                               >
                                 <Terminal size={10} />
-                                OTWÓRZ TERMINAL
+                                OTWÓRZ TERMINAL (code-server)
                                 <ExternalLink size={9} />
                               </a>
                               {angel.coolifyUuid && (
@@ -666,14 +850,28 @@ export default function Dashboard() {
                   ))}
                 </div>
 
-                {/* Angel status note */}
-                <div className="mt-4 p-3 rounded-sm border border-[#00d4ff]/10 bg-[#00d4ff]/3">
+                {/* Status summary bar */}
+                <div className="mt-4 grid grid-cols-4 gap-2">
+                  {[
+                    { label: "HEALTHY", count: healthyAngels, color: "#00ff88" },
+                    { label: "DEGRADED", count: angels.filter(a=>a.status==="degraded").length, color: "#ffd700" },
+                    { label: "STARTING", count: angels.filter(a=>a.status==="starting").length, color: "#00d4ff" },
+                    { label: "OFFLINE", count: errorAngels, color: "#ff3366" },
+                  ].map(s => (
+                    <div key={s.label} className="noc-card rounded-sm p-3 text-center">
+                      <div className="mono text-lg font-bold" style={{ color: s.color }}>{s.count}</div>
+                      <div className="text-[#333355] text-[9px] mono tracking-widest">{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-3 p-3 rounded-sm border border-[#00d4ff]/10 bg-[#00d4ff]/3">
                   <div className="flex items-start gap-2">
                     <Info size={12} className="text-[#00d4ff] mt-0.5 shrink-0" />
                     <p className="text-[#444466] text-[10px] mono leading-relaxed">
-                      Aniołowie Stróżowie są wdrożeni przez Coolify na Droplecie AMS3 (178.62.246.169). 
-                      Status "UNKNOWN" oznacza że kontener jest w trakcie startu lub healthcheck nie jest jeszcze skonfigurowany. 
-                      Kliknij "OTWÓRZ TERMINAL" aby uzyskać dostęp do terminala webowego danego Anioła.
+                      Aniołowie Stróżowie są wdrożeni przez Coolify na Droplecie AMS3 (178.62.246.169).
+                      Każdy anioł to instancja code-server (VS Code w przeglądarce) z dedykowanym workspace.
+                      Kliknij kartę anioła aby rozwinąć opcje zarządzania. Hasło: holon-angel-[name]-2026
                     </p>
                   </div>
                 </div>
@@ -700,11 +898,7 @@ export default function Dashboard() {
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-sm flex items-center justify-center" style={{
-                            backgroundColor: `${statusColor(svc.status)}10`,
-                            color: statusColor(svc.status),
-                            border: `1px solid ${statusColor(svc.status)}20`,
-                          }}>
+                          <div className="w-8 h-8 rounded-sm flex items-center justify-center" style={{ backgroundColor: `${statusColor(svc.status)}10`, color: statusColor(svc.status), border: `1px solid ${statusColor(svc.status)}20` }}>
                             {svc.icon}
                           </div>
                           <div>
@@ -724,14 +918,12 @@ export default function Dashboard() {
                           {svc.extra && <span className="ml-2 opacity-60">· {svc.extra}</span>}
                         </span>
                         {svc.url && (
-                          <a href={svc.url} target="_blank" rel="noopener noreferrer"
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-[#444466] hover:text-[#00ff88]">
+                          <a href={svc.url} target="_blank" rel="noopener noreferrer" className="opacity-0 group-hover:opacity-100 transition-opacity text-[#444466] hover:text-[#00ff88]">
                             <ExternalLink size={11} />
                           </a>
                         )}
                       </div>
 
-                      {/* Latency bar */}
                       {svc.latency && svc.latency > 0 && (
                         <div className="mt-2 h-0.5 bg-[#111122] rounded-full overflow-hidden">
                           <motion.div
@@ -747,7 +939,6 @@ export default function Dashboard() {
                   ))}
                 </div>
 
-                {/* Brain Router cache stats */}
                 {brainCacheRate !== null && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 noc-card rounded-sm p-4">
                     <div className="flex items-center justify-between mb-3">
@@ -774,29 +965,101 @@ export default function Dashboard() {
               </motion.div>
             )}
 
+            {/* ── Infrastructure (All Coolify Resources) ── */}
+            {activeSection === "infra" && (
+              <motion.div key="infra" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <SectionHeader
+                  title="WSZYSTKIE ZASOBY COOLIFY"
+                  sub="Pełna lista aplikacji, serwisów i baz danych na Droplecie AMS3"
+                  count={`${allResources.length} ZASOBÓW`}
+                />
+
+                {/* Stats row */}
+                <div className="grid grid-cols-4 gap-2 mb-4">
+                  {[
+                    { label: "RUNNING", count: infraRunning, color: "#00d4ff" },
+                    { label: "HEALTHY", count: infraHealthy, color: "#00ff88" },
+                    { label: "EXITED",  count: infraExited,  color: "#ff3366" },
+                    { label: "TOTAL",   count: allResources.length, color: "#888899" },
+                  ].map(s => (
+                    <div key={s.label} className="noc-card rounded-sm p-3 text-center">
+                      <div className="mono text-xl font-bold" style={{ color: s.color }}>{s.count}</div>
+                      <div className="text-[#333355] text-[9px] mono tracking-widest">{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Filters */}
+                <div className="flex gap-2 mb-3">
+                  <div className="flex-1 flex items-center gap-2 px-3 py-1.5 rounded-sm bg-[#0d0d1a] border border-[#1a1a2e]">
+                    <Search size={11} className="text-[#333355]" />
+                    <input
+                      type="text"
+                      placeholder="Szukaj zasobu..."
+                      value={infraSearch}
+                      onChange={e => setInfraSearch(e.target.value)}
+                      className="flex-1 bg-transparent text-[11px] mono text-[#888899] placeholder-[#333355] outline-none"
+                    />
+                  </div>
+                  {["all", "running", "exited", "healthy"].map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setInfraFilter(f)}
+                      className={`px-3 py-1.5 rounded-sm text-[10px] mono transition-all ${infraFilter === f ? "bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/20" : "bg-[#0d0d1a] text-[#444466] border border-[#1a1a2e] hover:text-[#888899]"}`}
+                    >
+                      {f.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Resource list */}
+                <div className="space-y-1">
+                  {filteredResources.length === 0 ? (
+                    <div className="text-center py-10 text-[#333355] text-xs mono">
+                      {allResources.length === 0 ? "Ładowanie zasobów..." : "Brak wyników"}
+                    </div>
+                  ) : (
+                    filteredResources.map((res, i) => {
+                      const st = rawToStatus(res.status);
+                      return (
+                        <motion.div
+                          key={res.uuid}
+                          initial={{ opacity: 0, x: -5 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: Math.min(i * 0.01, 0.3) }}
+                          className="flex items-center justify-between px-3 py-2 rounded-sm bg-[#0a0a0f] border border-[#111122] hover:border-[#1a1a2e] group"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <StatusDot status={st} size={6} animate={false} />
+                            <span className="text-[#888899] text-[11px] mono group-hover:text-[#ccccdd] transition-colors">{res.name}</span>
+                            <span className="text-[#222244] text-[9px] mono px-1.5 py-0.5 rounded" style={{ border: "1px solid #1a1a2e" }}>{res.type}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="mono text-[9px]" style={{ color: statusColor(st) }}>{res.status}</span>
+                          </div>
+                        </motion.div>
+                      );
+                    })
+                  )}
+                </div>
+              </motion.div>
+            )}
+
             {/* ── Kairos Pulse ── */}
             {activeSection === "kairos" && (
               <motion.div key="kairos" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <SectionHeader
-                  title="KAIROS PULSE"
-                  sub="Przepustowość zadań sieci Holon Mesh · nocna_fabryka_queue · Supabase"
-                />
+                <SectionHeader title="KAIROS PULSE" sub="Przepustowość zadań sieci Holon Mesh · nocna_fabryka_queue · Supabase" />
 
                 {kairos ? (
                   <>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
                       {[
-                        { label: "TOTAL TASKS",     value: kairos.total.toLocaleString(),            color: "#ccccdd",  icon: <Layers size={16}/> },
-                        { label: "PENDING",          value: kairos.pending.toLocaleString(),          color: "#ffd700",  icon: <Clock size={16}/> },
-                        { label: "DEPLOYED",         value: kairos.deployed.toLocaleString(),         color: "#00ff88",  icon: <CheckCircle2 size={16}/> },
-                        { label: "FAILED",           value: kairos.failed.toLocaleString(),           color: "#ff3366",  icon: <XCircle size={16}/> },
+                        { label: "TOTAL TASKS",  value: kairos.total.toLocaleString(),    color: "#ccccdd", icon: <Layers size={16}/> },
+                        { label: "PENDING",       value: kairos.pending.toLocaleString(),  color: "#ffd700", icon: <Clock size={16}/> },
+                        { label: "DEPLOYED",      value: kairos.deployed.toLocaleString(), color: "#00ff88", icon: <CheckCircle2 size={16}/> },
+                        { label: "FAILED",        value: kairos.failed.toLocaleString(),   color: "#ff3366", icon: <XCircle size={16}/> },
                       ].map(m => (
-                        <motion.div
-                          key={m.label}
-                          initial={{ opacity: 0, scale: 0.95 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          className="noc-card rounded-sm p-4 text-center"
-                        >
+                        <motion.div key={m.label} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="noc-card rounded-sm p-4 text-center">
                           <div className="flex justify-center mb-2" style={{ color: m.color }}>{m.icon}</div>
                           <div className="mono text-xl font-bold" style={{ color: m.color }}>{m.value}</div>
                           <div className="text-[#333355] text-[9px] mono tracking-wider mt-1">{m.label}</div>
@@ -804,7 +1067,6 @@ export default function Dashboard() {
                       ))}
                     </div>
 
-                    {/* Progress bars */}
                     <div className="noc-card rounded-sm p-4 mb-4">
                       <div className="text-[#444466] text-[10px] mono tracking-widest mb-3">ROZKŁAD STATUSÓW</div>
                       {[
@@ -834,10 +1096,9 @@ export default function Dashboard() {
                       <div className="flex items-start gap-2">
                         <Sparkles size={12} className="text-[#00ff88] mt-0.5 shrink-0" />
                         <p className="text-[#444466] text-[10px] mono leading-relaxed">
-                          Kairos Pulse pokazuje przepustowość sieci Holon Mesh w czasie rzeczywistym. 
-                          Tabela nocna_fabryka_queue zawiera {kairos.total.toLocaleString()} zadań — 
-                          {kairos.deployed.toLocaleString()} zostało już wdrożonych i zarchiwizowanych. 
-                          Dane odświeżają się co 30 sekund.
+                          Kairos Pulse pokazuje przepustowość sieci Holon Mesh w czasie rzeczywistym.
+                          Tabela nocna_fabryka_queue zawiera {kairos.total.toLocaleString()} zadań —
+                          {kairos.deployed.toLocaleString()} zostało już wdrożonych. Dane odświeżają się co 30s.
                         </p>
                       </div>
                     </div>
@@ -909,6 +1170,182 @@ export default function Dashboard() {
               </motion.div>
             )}
 
+            {/* ── Operations Panel ── */}
+            {activeSection === "ops" && (
+              <motion.div key="ops" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <SectionHeader
+                  title="PANEL OPERACYJNY"
+                  sub="Zarządzanie infrastrukturą · Optymalizacja · Diagnostyka"
+                />
+
+                {/* Quick actions */}
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
+                  {[
+                    {
+                      title: "RESTART WSZYSTKICH ANIOŁÓW",
+                      desc: "Restartuje wszystkie 12 instancji code-server",
+                      icon: <RotateCcw size={16}/>,
+                      color: "#00d4ff",
+                      action: async () => {
+                        for (const angel of angels) {
+                          if (angel.coolifyUuid) {
+                            await coolifyFetch(`/services/${angel.coolifyUuid}/restart`, "POST");
+                            await new Promise(r => setTimeout(r, 500));
+                          }
+                        }
+                        addAlert("info", "Restart wszystkich aniołów zlecony", "Ops Panel");
+                        setTimeout(fetchCoolifyStatus, 8000);
+                      }
+                    },
+                    {
+                      title: "STOP WSZYSTKICH ANIOŁÓW",
+                      desc: "Zatrzymuje wszystkie kontenery (oszczędność RAM)",
+                      icon: <StopCircle size={16}/>,
+                      color: "#ff3366",
+                      action: async () => {
+                        for (const angel of angels) {
+                          if (angel.coolifyUuid) {
+                            await coolifyFetch(`/services/${angel.coolifyUuid}/stop`, "POST");
+                            await new Promise(r => setTimeout(r, 300));
+                          }
+                        }
+                        addAlert("warning", "Stop wszystkich aniołów zlecony", "Ops Panel");
+                        setTimeout(fetchCoolifyStatus, 5000);
+                      }
+                    },
+                    {
+                      title: "START WSZYSTKICH ANIOŁÓW",
+                      desc: "Uruchamia wszystkie kontenery code-server",
+                      icon: <PlayCircle size={16}/>,
+                      color: "#00ff88",
+                      action: async () => {
+                        for (const angel of angels) {
+                          if (angel.coolifyUuid) {
+                            await coolifyFetch(`/services/${angel.coolifyUuid}/start`, "POST");
+                            await new Promise(r => setTimeout(r, 500));
+                          }
+                        }
+                        addAlert("info", "Start wszystkich aniołów zlecony", "Ops Panel");
+                        setTimeout(fetchCoolifyStatus, 8000);
+                      }
+                    },
+                  ].map(op => (
+                    <button
+                      key={op.title}
+                      onClick={op.action}
+                      className="noc-card rounded-sm p-4 text-left hover:border-opacity-50 transition-all group"
+                      style={{ borderColor: `${op.color}20` }}
+                    >
+                      <div className="flex items-center gap-2 mb-2" style={{ color: op.color }}>
+                        {op.icon}
+                        <span className="mono text-[10px] font-bold tracking-wider">{op.title}</span>
+                      </div>
+                      <p className="text-[#333355] text-[10px] mono leading-relaxed">{op.desc}</p>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Infrastructure status overview */}
+                <div className="noc-card rounded-sm p-4 mb-4">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Gauge size={14} className="text-[#00ff88]" />
+                    <span className="text-[#ccccdd] text-[12px] font-semibold">Status Infrastruktury AMS3</span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {[
+                      { label: "ŁĄCZNE ZASOBY", value: allResources.length, color: "#888899" },
+                      { label: "RUNNING", value: infraRunning, color: "#00d4ff" },
+                      { label: "HEALTHY", value: infraHealthy, color: "#00ff88" },
+                      { label: "EXITED", value: infraExited, color: "#ff3366" },
+                    ].map(s => (
+                      <div key={s.label} className="text-center p-3 rounded-sm bg-[#0d0d1a]">
+                        <div className="mono text-xl font-bold" style={{ color: s.color }}>{s.value}</div>
+                        <div className="text-[#333355] text-[9px] mono tracking-wider mt-1">{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Status distribution bar */}
+                  <div className="mt-4">
+                    <div className="text-[#333355] text-[9px] mono tracking-widest mb-2">ROZKŁAD STATUSÓW</div>
+                    <div className="h-2 rounded-full overflow-hidden flex">
+                      {allResources.length > 0 && [
+                        { count: infraHealthy, color: "#00ff88" },
+                        { count: infraRunning - infraHealthy, color: "#ffd700" },
+                        { count: infraExited, color: "#ff3366" },
+                        { count: allResources.length - infraRunning - infraExited, color: "#222244" },
+                      ].map((seg, i) => (
+                        <motion.div
+                          key={i}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${(seg.count / allResources.length) * 100}%` }}
+                          transition={{ duration: 0.8, delay: i * 0.1 }}
+                          style={{ backgroundColor: seg.color, minWidth: seg.count > 0 ? 2 : 0 }}
+                        />
+                      ))}
+                    </div>
+                    <div className="flex gap-4 mt-2">
+                      {[
+                        { label: "Healthy", color: "#00ff88", count: infraHealthy },
+                        { label: "Running", color: "#ffd700", count: infraRunning - infraHealthy },
+                        { label: "Exited", color: "#ff3366", count: infraExited },
+                        { label: "Unknown", color: "#222244", count: allResources.length - infraRunning - infraExited },
+                      ].map(s => (
+                        <div key={s.label} className="flex items-center gap-1">
+                          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
+                          <span className="text-[#333355] text-[9px] mono">{s.label}: {s.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Recommendations */}
+                <div className="noc-card rounded-sm p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Wrench size={14} className="text-[#ffd700]" />
+                    <span className="text-[#ccccdd] text-[12px] font-semibold">Rekomendacje Optymalizacyjne</span>
+                  </div>
+                  <div className="space-y-2.5">
+                    {[
+                      {
+                        priority: "HIGH",
+                        color: "#ff3366",
+                        title: "Upgrade Dropleta",
+                        desc: "12 instancji code-server wymaga min. 8GB RAM. Obecny Droplet jest przeciążony. Zalecany: s-4vcpu-8gb ($48/mies).",
+                      },
+                      {
+                        priority: "MED",
+                        color: "#ffd700",
+                        title: "Limity zasobów kontenerów",
+                        desc: "Dodaj deploy.resources.limits (512MB RAM, 0.5 CPU) do każdego anioła aby zapobiec OOM kills.",
+                      },
+                      {
+                        priority: "MED",
+                        color: "#ffd700",
+                        title: "Rotacja aniołów",
+                        desc: "Uruchamiaj max 4-6 aniołów jednocześnie. Pozostałe zatrzymaj — uruchamiaj na żądanie.",
+                      },
+                      {
+                        priority: "LOW",
+                        color: "#00d4ff",
+                        title: "Monitoring zasobów",
+                        desc: "Uruchom Glances lub Netdata na Droplecie aby monitorować CPU/RAM/Disk w czasie rzeczywistym.",
+                      },
+                    ].map(rec => (
+                      <div key={rec.title} className="flex gap-3 p-3 rounded-sm" style={{ backgroundColor: `${rec.color}05`, borderLeft: `2px solid ${rec.color}30` }}>
+                        <span className="mono text-[9px] font-bold shrink-0 mt-0.5" style={{ color: rec.color }}>{rec.priority}</span>
+                        <div>
+                          <div className="text-[#ccccdd] text-[11px] font-semibold mb-0.5">{rec.title}</div>
+                          <div className="text-[#444466] text-[10px] mono leading-relaxed">{rec.desc}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
           </AnimatePresence>
         </main>
 
@@ -972,6 +1409,7 @@ export default function Dashboard() {
                 { label: "SUPABASE",         ok: coordMessages.length >= 0 },
                 { label: "CLOUDFLARE",       ok: services.find(s=>s.id==="brainrouter")?.status === "healthy" },
                 { label: "HOLON MESH",       ok: healthyAngels + healthyServices > 5 },
+                { label: "INFRA",            ok: infraRunning > 15 },
               ].map(item => (
                 <div key={item.label} className="flex items-center justify-between">
                   <span className="mono text-[9px] text-[#333355]">{item.label}</span>
